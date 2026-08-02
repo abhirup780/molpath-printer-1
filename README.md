@@ -72,13 +72,26 @@ PATH** on the installer's first screen. `1 - Setup.bat` says so if it is missing
 **It is not in the source code, on purpose.** The endpoint returns patient
 demographics, so its address does not travel with the repository.
 
-The first time you start the app it asks for the address and saves it to
-**`config.local.json`**, which is gitignored and stays on that PC. Change it
-later with **Tools → Booking server URL…**.
+**The easy way — just start the app.** On a PC that has no address set yet, it
+asks before anything else:
 
-If you would rather set it up before first launch, copy
-`config.local.example.json` to `config.local.json` and fill in `api_url`.
-Setting `MOLPATH_API_URL` in the environment overrides both.
+![First run](docs/first-run.png)
+
+Paste the address, click **Save**, and it is written to `config.local.json` on
+that PC. You never need to touch it again. Change it later with
+**Tools → Booking server URL…**.
+
+Two alternatives if you prefer to prepare the PC before anyone launches it:
+
+```
+copy config.local.example.json config.local.json
+```
+then edit `api_url` in it. Or set an environment variable, which overrides both
+files and is useful for pointing at a test instance:
+
+```
+set MOLPATH_API_URL=https://your-server/viewBookingHeader
+```
 
 Settings load in this order, each overriding the last:
 
