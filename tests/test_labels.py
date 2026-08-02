@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from labelprint import zpl
+from labelprint import bulk, zpl
 from labelprint.api import Booking
 from labelprint.config import Config
 
@@ -164,6 +164,51 @@ check("no barcode commands remain", "^BC" not in mixed and "^BY" not in mixed)
 dirty = zpl.build(booking("TEST^NAME~X"), cfg)
 check("zpl control characters are neutralised",
       "^" not in zpl.batch([dirty, None], cfg).split("^FD")[1].split("^FS")[0])
+
+print("bulk paste")
+one_per_line = bulk.parse("PR1000001\nPR1000002\nPR1000003")
+check("one per line", one_per_line.ids == ["PR1000001", "PR1000002", "PR1000003"],
+      one_per_line.ids)
+check("comma separated",
+      bulk.parse("PR1000001, PR1000002,PR1000003").ids
+      == ["PR1000001", "PR1000002", "PR1000003"])
+check("excel column with tabs and blank rows",
+      bulk.parse("PR1000001\t\r\n\r\nPR1000002\t").ids
+      == ["PR1000001", "PR1000002"])
+check("semicolons, pipes and spaces",
+      bulk.parse("PR1000001; PR1000002 | PR1000003").ids
+      == ["PR1000001", "PR1000002", "PR1000003"])
+check("quotes and brackets are separators",
+      bulk.parse('"PR1000001",(PR1000002)').ids == ["PR1000001", "PR1000002"])
+check("case is normalised", bulk.parse("pr1000001").ids == ["PR1000001"])
+
+table = bulk.parse(
+    "SalesID\tPatient\tDate\n"
+    "PR1000001\tSPECIMEN ONE\t25-03-2026\n"
+    "PR1000002\tSPECIMEN TWO\t25-03-2026\n")
+check("a pasted table keeps only the IDs",
+      table.ids == ["PR1000001", "PR1000002"], table.ids)
+check("headings and names are reported as ignored",
+      "SALESID" in table.skipped and "SPECIMEN" in table.skipped, table.skipped)
+check("dates are not mistaken for IDs",
+      not any(t.startswith("25") for t in table.ids), table.ids)
+
+dupes = bulk.parse("PR1000001 PR1000002 PR1000001 PR1000001")
+check("repeats are listed once", dupes.ids == ["PR1000001", "PR1000002"])
+check("repeats are counted", dupes.repeated == {"PR1000001": 3}, dupes.repeated)
+check("order of first appearance is kept", dupes.ids[0] == "PR1000001")
+
+check("ignored tokens are de-duplicated",
+      bulk.parse("Patient Patient PR1000001").skipped == ["PATIENT"])
+check("empty input is handled", bulk.parse("").ids == [])
+check("text with no IDs is handled", bulk.parse("no ids here!").ids == [])
+check("summary reads sensibly", table.summary.startswith("2 Sales ID(s)"),
+      table.summary)
+
+check("a broken custom pattern falls back to the default",
+      bulk.parse("PR1000001", pattern="[unclosed").ids == ["PR1000001"])
+check("a custom pattern is honoured",
+      bulk.parse("AB12345 PR1000001", pattern=r"^AB[0-9]+$").ids == ["AB12345"])
 
 print()
 if failures:

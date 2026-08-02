@@ -23,6 +23,7 @@ one pass.
 - [Installation](#installation)
 - [First run](#first-run)
 - [Daily use](#daily-use)
+- [Pasting a list](#pasting-a-list)
 - [PDF proof](#pdf-proof)
 - [Command line](#command-line)
 - [Configuration](#configuration)
@@ -47,6 +48,7 @@ Patient name on top; sex and age bottom-left; PR number bottom-right.
 | | |
 |---|---|
 | **Batch queue** | any mix of patients and per-patient counts in one print run |
+| **Bulk paste** | paste a whole lab list — any separators — and queue it in one go |
 | **Blank stickers** | leftover slots are left genuinely blank, never reused |
 | **Nothing overflows** | both lines auto-shrink to fit inside 2 mm padding |
 | **Live preview** | see the sheet exactly as it will come off the printer |
@@ -201,6 +203,38 @@ from a clean list.
 
 ---
 
+## Pasting a list
+
+For a run of samples, **Paste list…** takes the whole thing at once instead of
+scanning one at a time.
+
+<p align="center">
+  <img src="docs/bulk.png" alt="Pasting a list of Sales IDs" width="560">
+</p>
+
+Copy a column straight out of Excel, or a list from a report or an email —
+**commas, tabs, new lines, semicolons, pipes, spaces, quotes and brackets are
+all treated as separators**, so nothing needs tidying first. Then:
+
+1. Paste into the box.
+2. Set **Stickers each** if it is not 1.
+3. **Check list** — every ID is looked up and shown with its patient name.
+4. **Add N to batch** queues the ones that were found.
+
+Anything that is not a Sales ID is ignored automatically: column headings,
+patient names, dates. The status line says how many tokens were skipped so
+nothing disappears without you knowing. A repeated ID is listed once, and the
+count is reported.
+
+IDs that do not exist are shown as **not found** and are simply left out — the
+rest of the list still goes through. You can press **Stop** part way through a
+long list; whatever has already been looked up remains available to add.
+
+If your Sales IDs are not of the form `PR9000001`, adjust `sales_id_pattern` in
+`config.json`.
+
+---
+
 ## PDF proof
 
 **Tools → Save PDF proof…** writes an A4 sheet showing the batch exactly as it
@@ -350,6 +384,7 @@ jobs are written to `out.zpl` instead of being printed.
 | `labelprint/gui.py` | desktop window and batch list |
 | `labelprint/zpl.py` | label content rules, auto-fit, ZPL generation |
 | `labelprint/api.py` | booking lookup |
+| `labelprint/bulk.py` | parsing a pasted lab list into Sales IDs |
 | `labelprint/config.py` | layered configuration |
 | `labelprint/output.py` | Windows RAW / TCP 9100 / file output |
 | `labelprint/preview.py` | on-screen sheet rendering |

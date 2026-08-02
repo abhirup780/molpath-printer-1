@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import queue
 import sys
 import threading
 import tkinter as tk
@@ -17,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
-from . import api, config, output, pdfproof, preview, zpl
+from . import api, bulk, config, output, pdfproof, preview, zpl
 
 BG = "#f4f6f8"
 
@@ -122,6 +123,8 @@ class App(tk.Tk):
         self.add_btn = tk.Button(top, text="Add to list", width=11,
                                  font=("Segoe UI", 9, "bold"), command=self._add)
         self.add_btn.pack(side="left")
+        tk.Button(top, text="Paste list...", width=11,
+                  command=self._bulk_add).pack(side="left", padx=(6, 0))
         tk.Button(top, text="Add blank", width=10,
                   command=self._add_blank).pack(side="left", padx=(6, 0))
 
@@ -271,29 +274,44 @@ class App(tk.Tk):
         self.add_btn.configure(state="disabled")
         self.lookup_var.set(f"Looking up {sid.upper()} ...")
 
+        # As in BulkDialog: the worker only posts to a queue, and every Tk call
+        # happens on the main thread when the queue is polled.
+        inbox: queue.Queue = queue.Queue()
+
         def work() -> None:
             try:
-                booking = api.fetch(sid, self.cfg)
+                inbox.put(("ok", api.fetch(sid, self.cfg)))
             except api.BookingError as exc:
-                self.after(0, lambda: self._add_failed(str(exc)))
+                inbox.put(("error", str(exc)))
+
+        def poll() -> None:
+            try:
+                kind, payload = inbox.get_nowait()
+            except queue.Empty:
+                self.after(40, poll)
                 return
-            self.after(0, lambda: self._add_done(booking, qty))
+            if kind == "ok":
+                self._add_done(payload, qty)
+            else:
+                self._add_failed(payload)
 
         threading.Thread(target=work, daemon=True).start()
+        self.after(40, poll)
 
-    def _add_done(self, booking: api.Booking, qty: int) -> None:
-        self.add_btn.configure(state="normal")
+    def add_booking(self, booking: api.Booking, qty: int) -> zpl.LabelText:
+        """Queue a patient. Adding one already in the batch bumps its count
+        instead of listing it twice, so the batch stays readable."""
         label = zpl.build(booking, self.cfg)
-
-        # Same patient scanned twice: bump the count instead of listing them
-        # separately, so the batch stays readable.
         for item in self.queue:
             if item.label is not None and item.label.prno == label.prno:
                 item.qty += qty
-                break
-        else:
-            self.queue.append(QueueItem(qty=qty, label=label, booking=booking))
+                return label
+        self.queue.append(QueueItem(qty=qty, label=label, booking=booking))
+        return label
 
+    def _add_done(self, booking: api.Booking, qty: int) -> None:
+        self.add_btn.configure(state="normal")
+        label = self.add_booking(booking, qty)
         self.lookup_var.set(f"Added {qty} x {label.prno}  {booking.patientname}  "
                             f"{label.sex_age}")
         self.sales_var.set("")
@@ -306,6 +324,9 @@ class App(tk.Tk):
         self.lookup_var.set(message)
         self.sales_entry.focus_set()
         self.sales_entry.selection_range(0, "end")
+
+    def _bulk_add(self) -> None:
+        BulkDialog(self)
 
     def _add_blank(self) -> None:
         self.queue.append(QueueItem(qty=self._qty()))
@@ -479,6 +500,197 @@ class App(tk.Tk):
                 item.label = zpl.build(item.booking, self.cfg)
         self._refresh_target()
         self._refresh()
+
+
+class BulkDialog(tk.Toplevel):
+    """Paste a lab list, check every Sales ID, then queue the ones that exist.
+
+    Lookups run one at a time on a worker thread so the window stays responsive
+    and can be cancelled part way through a long list.
+    """
+
+    def __init__(self, app: App) -> None:
+        super().__init__(app)
+        self.app = app
+        self.cfg = app.cfg
+        self.results: list[tuple[str, str, api.Booking | None]] = []
+        self.cancelled = False
+        self.running = False
+
+        ui = app.ui
+        self.title("Paste a list of Sales IDs")
+        self.transient(app)
+        self.configure(bg=BG)
+
+        head = tk.Frame(self, bg=BG)
+        head.pack(fill="x", padx=12, pady=(12, 4))
+        tk.Label(head, bg=BG, justify="left", font=("Segoe UI", 9),
+                 text="Paste from Excel, a report or an email. Commas, tabs, "
+                      "new lines and spaces all work.\nHeadings and dates are "
+                      "ignored automatically.").pack(anchor="w")
+
+        self.text = tk.Text(self, width=52, height=9, font=("Consolas", 10),
+                            undo=True)
+        self.text.pack(fill="both", expand=True, padx=12)
+        self.text.focus_set()
+
+        row = tk.Frame(self, bg=BG)
+        row.pack(fill="x", padx=12, pady=8)
+        tk.Label(row, text="Stickers each", bg=BG,
+                 font=("Segoe UI", 10)).pack(side="left")
+        self.qty_var = tk.StringVar(value=str(self.cfg.default_qty))
+        ttk.Spinbox(row, from_=1, to=99, width=4, textvariable=self.qty_var,
+                    font=("Consolas", 12)).pack(side="left", padx=(6, 14))
+        self.check_btn = tk.Button(row, text="Check list", width=12,
+                                   font=("Segoe UI", 9, "bold"),
+                                   command=self._check)
+        self.check_btn.pack(side="left")
+        tk.Button(row, text="Clear", width=8,
+                  command=lambda: self.text.delete("1.0", "end")).pack(
+            side="left", padx=6)
+
+        cols = ("sid", "status", "patient")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
+        for key, title, width, anchor in (("sid", "Sales ID", 130, "w"),
+                                          ("status", "Result", 110, "w"),
+                                          ("patient", "Patient", 300, "w")):
+            self.tree.heading(key, text=title)
+            self.tree.column(key, width=int(width * ui), anchor=anchor)
+        self.tree.pack(fill="both", expand=True, padx=12)
+
+        self.status_var = tk.StringVar(value="")
+        tk.Label(self, textvariable=self.status_var, bg=BG, anchor="w",
+                 font=("Segoe UI", 9)).pack(fill="x", padx=14, pady=(6, 0))
+
+        foot = tk.Frame(self, bg=BG)
+        foot.pack(fill="x", padx=12, pady=10)
+        self.add_btn = tk.Button(foot, text="Add to batch", width=16,
+                                 state="disabled",
+                                 font=("Segoe UI", 10, "bold"), command=self._add)
+        self.add_btn.pack(side="left")
+        tk.Button(foot, text="Close", width=10,
+                  command=self._close).pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", self._close)
+        self.geometry(f"+{app.winfo_rootx() + int(40 * ui)}"
+                      f"+{app.winfo_rooty() + int(40 * ui)}")
+
+    # ------------------------------------------------------------------ flow
+    def _close(self) -> None:
+        self.cancelled = True
+        self.destroy()
+
+    def _qty(self) -> int:
+        try:
+            return max(1, min(99, int(self.qty_var.get())))
+        except ValueError:
+            return self.cfg.default_qty
+
+    def _check(self) -> None:
+        if self.running:                       # second click = cancel
+            self.cancelled = True
+            return
+
+        parsed = bulk.parse(self.text.get("1.0", "end"), self.cfg.sales_id_pattern)
+        self.tree.delete(*self.tree.get_children())
+        self.results.clear()
+        self.add_btn.configure(state="disabled")
+
+        if not parsed.ids:
+            self.status_var.set(
+                "No Sales IDs found in that text."
+                + (f"  Ignored: {', '.join(parsed.skipped[:6])}"
+                   if parsed.skipped else ""))
+            return
+
+        note = parsed.summary
+        if parsed.repeated:
+            note += "  (repeats counted once)"
+        self.status_var.set(f"{note}. Looking up ...")
+
+        self.cancelled = False
+        self.running = True
+        self.check_btn.configure(text="Stop")
+
+        # The worker only ever puts rows on a queue; every Tk call happens on
+        # the main thread in _poll. Touching widgets from a worker thread is
+        # not safe and fails outright if the event loop is not running.
+        self.inbox: queue.Queue = queue.Queue()
+        threading.Thread(target=self._work, args=(parsed.ids,),
+                         daemon=True).start()
+        self.after(40, self._poll, len(parsed.ids))
+
+    def _work(self, ids: list[str]) -> None:
+        for sid in ids:
+            if self.cancelled:
+                break
+            try:
+                booking = api.fetch(sid, self.cfg)
+                row = (sid, "found", booking)
+            except api.BookingError as exc:
+                short = "not found" if "No booking" in str(exc) else "failed"
+                row = (sid, short, None)
+            self.inbox.put(row)
+        self.inbox.put(None)                       # finished sentinel
+
+    def _poll(self, total: int) -> None:
+        if not self.winfo_exists():
+            return
+        finished = False
+        while True:
+            try:
+                item = self.inbox.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                finished = True
+                break
+            self._row_done(item, len(self.results) + 1, total)
+        if finished:
+            self._finished()
+        else:
+            self.after(40, self._poll, total)
+
+    def _row_done(self, row, index: int, total: int) -> None:
+        sid, status, booking = row
+        self.results.append(row)
+        patient = ""
+        if booking is not None:
+            label = zpl.build(booking, self.cfg)
+            patient = f"{booking.patientname}   {label.sex_age}"
+        self.tree.insert("", "end", values=(sid, status, patient))
+        self.tree.yview_moveto(1.0)
+        self.status_var.set(f"Checked {index} of {total} ...")
+
+    def _finished(self) -> None:
+        if not self.winfo_exists():
+            return
+        self.running = False
+        self.check_btn.configure(text="Check list")
+        found = [r for r in self.results if r[2] is not None]
+        missing = len(self.results) - len(found)
+        text = f"{len(found)} found"
+        if missing:
+            text += f", {missing} could not be looked up"
+        if self.cancelled:
+            text += "  (stopped early)"
+        self.status_var.set(text + ".")
+        self.add_btn.configure(state="normal" if found else "disabled",
+                               text=f"Add {len(found)} to batch"
+                                    if found else "Add to batch")
+
+    def _add(self) -> None:
+        qty = self._qty()
+        added = 0
+        for sid, _status, booking in self.results:
+            if booking is None:
+                continue
+            self.app.add_booking(booking, qty)
+            added += 1
+        self.app.lookup_var.set(f"Added {added} patient(s) from a pasted list, "
+                                f"{qty} sticker(s) each.")
+        self.app._refresh()
+        self._close()
 
 
 def main() -> None:

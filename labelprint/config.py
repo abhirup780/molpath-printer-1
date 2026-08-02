@@ -76,6 +76,7 @@ class Config:
     # --- content rules ------------------------------------------------------
     age_style: str = "years"        # "years" = strict Y only; "smart" = M/D under 1y
     default_qty: int = 1            # stickers added per Sales ID
+    sales_id_pattern: str = r"^[A-Za-z]{1,4}[0-9]{4,}$"  # what a pasted list may contain
     pad_with_blanks: bool = True    # fill the last feed so the next batch is clean
 
     # --- printer ------------------------------------------------------------
