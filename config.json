@@ -1,0 +1,37 @@
+{
+  "_comment": "Shared calibration. Site-specific settings (booking server URL, printer) go in config.local.json, which is not tracked in git.",
+
+  "api_timeout_s": 20.0,
+
+  "dpi": 203,
+  "sticker_width_mm": 38.0,
+  "sticker_height_mm": 12.5,
+  "columns": 2,
+  "rows": 2,
+  "column_gap_mm": 2.0,
+  "row_gap_mm": 0.0,
+  "feed_gap_mm": 2.0,
+  "left_margin_mm": 0.0,
+  "top_margin_mm": 0.0,
+  "pad_mm": 2.0,
+
+  "name_y": 11,
+  "name_h_max": 28,
+  "name_h_min": 15,
+  "id_y": 54,
+  "id_h_max": 32,
+  "id_h_min": 16,
+  "font_w_ratio": 0.55,
+  "id_gap_chars": 2,
+
+  "age_style": "years",
+  "default_qty": 1,
+  "pad_with_blanks": true,
+
+  "file_path": "out.zpl",
+  "darkness": null,
+  "print_speed": null,
+  "media_tracking": "Y",
+  "label_length_dots": null,
+  "tear_offset": null
+}

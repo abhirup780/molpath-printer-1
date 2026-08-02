@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy this file to config.local.json and fill in your site's values. config.local.json is never committed. The app writes it for you if you prefer: it asks for the booking server on first run, and Tools -> Choose printer saves the printer here.",
+
+  "api_url": "https://your-booking-server.example/viewBookingHeader",
+
+  "output_mode": "windows",
+  "printer_name": "",
+
+  "tcp_host": "",
+  "tcp_port": 9100
+}

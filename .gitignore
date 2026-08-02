@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# This site's booking server URL and printer - never commit
+config.local.json
+
+# Generated output - never commit anything that may carry patient data
+*.zpl
+proof*.pdf
+labels-*.pdf
+batch.pdf
+*.png
+!docs/*.png
