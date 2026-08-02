@@ -189,13 +189,31 @@ set MOLPATH_API_URL=https://your-server/viewBookingHeader
 | 5 | Check the sheet preview, then **Print batch** |
 
 Scanning the same PR twice increases its count rather than adding a second row.
-Select a row and use **+1 / −1 / Remove**, or press `Delete`.
+
+### Changing counts in bulk
+
+Rows support normal multi-selection — **Ctrl+click** for individual rows,
+**Shift+click** for a range, **Ctrl+A** or **Select all** for everything — and
+every button applies to the whole selection.
+
+The usual sequence after pasting a list is:
+
+> **Ctrl+A** → **Set count…** → type `3` → every patient gets 3 stickers.
+
+| Button | |
+|---|---|
+| **Select all** | select every row (`Ctrl+A`) |
+| **Set count…** | give every selected row the same number of stickers |
+| **+1 / −1** | adjust every selected row by one |
+| **Remove** | delete every selected row (`Delete`) |
+| **Clear all** | empty the batch |
 
 | Shortcut | |
 |---|---|
 | `Enter` | look up and add to the batch |
+| `Ctrl` + `A` | select every row |
 | `Ctrl` + `P` | print the batch |
-| `Delete` | remove the selected row |
+| `Delete` | remove the selected rows |
 | `Esc` | return focus to the Sales ID box |
 
 The batch clears itself after a successful print, so the next patient starts

@@ -16,7 +16,7 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass, field
 from datetime import datetime
-from tkinter import filedialog, font as tkfont, messagebox, ttk
+from tkinter import (filedialog, font as tkfont, messagebox, simpledialog, ttk)
 
 from . import api, bulk, config, output, pdfproof, preview, zpl
 
@@ -139,7 +139,8 @@ class App(tk.Tk):
         list_frame.columnconfigure(0, weight=1)
 
         cols = ("qty", "prno", "name", "sexage")
-        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=7)
+        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings",
+                                 height=7, selectmode="extended")
         for key, text, width, anchor in (
             ("qty", "Stickers", 80, "center"), ("prno", "PR No", 130, "w"),
             ("name", "Patient", 330, "w"), ("sexage", "Sex/Age", 90, "center"),
@@ -148,12 +149,20 @@ class App(tk.Tk):
             self.tree.column(key, width=int(width * self.ui), anchor=anchor)
         self.tree.grid(row=0, column=0, sticky="ew")
         self.tree.bind("<Delete>", lambda _e: self._remove())
+        self.tree.bind("<Control-a>", self._select_all)
+        self.tree.bind("<Control-A>", self._select_all)
+        self.bind("<Control-a>", self._select_all)
+        self.bind("<Control-A>", self._select_all)
 
         side = tk.Frame(list_frame, bg=BG)
         side.grid(row=0, column=1, sticky="ns", padx=(8, 0))
-        for text, cmd in (("+1", lambda: self._bump(1)), ("-1", lambda: self._bump(-1)),
-                          ("Remove", self._remove), ("Clear all", self._clear)):
-            tk.Button(side, text=text, width=9, command=cmd).pack(pady=2)
+        for text, cmd in (("Select all", self._select_all),
+                          ("Set count...", self._set_count),
+                          ("+1", lambda: self._bump(1)),
+                          ("-1", lambda: self._bump(-1)),
+                          ("Remove", self._remove),
+                          ("Clear all", self._clear)):
+            tk.Button(side, text=text, width=10, command=cmd).pack(pady=2)
 
         self.summary_var = tk.StringVar()
         tk.Label(self, textvariable=self.summary_var, bg=BG, anchor="w",
@@ -202,7 +211,11 @@ class App(tk.Tk):
             slots.extend([item.label] * item.qty)
         return zpl.pad_slots(slots, self.cfg, self.cfg.pad_with_blanks)
 
-    def _refresh(self) -> None:
+    def _refresh(self, keep: list[int] | None = None) -> None:
+        # The tree is rebuilt from scratch, so the selection has to be put back
+        # or every +1 would clear what the user had highlighted.
+        if keep is None:
+            keep = self._selected()
         self.tree.delete(*self.tree.get_children())
         for i, item in enumerate(self.queue):
             if item.is_blank:
@@ -211,6 +224,10 @@ class App(tk.Tk):
                 values = (item.qty, item.label.prno, item.label.name,
                           item.label.sex_age)
             self.tree.insert("", "end", iid=str(i), values=values)
+
+        restore = [str(i) for i in keep if 0 <= i < len(self.queue)]
+        if restore:
+            self.tree.selection_set(restore)
 
         slots = self._slots()
         filled = sum(1 for s in slots if s is not None)
@@ -261,9 +278,23 @@ class App(tk.Tk):
         except ValueError:
             return self.cfg.default_qty
 
-    def _selected(self) -> int | None:
-        sel = self.tree.selection()
-        return int(sel[0]) if sel else None
+    def _selected(self) -> list[int]:
+        """Every selected row, low index first. The list supports shift- and
+        ctrl-click, and Ctrl+A, so actions must apply to all of them."""
+        return sorted(int(iid) for iid in self.tree.selection())
+
+    def _select_all(self, _event=None) -> str:
+        self.tree.selection_set(self.tree.get_children())
+        self.tree.focus_set()
+        return "break"          # stop Tk's default select-all on the entry
+
+    def _need_selection(self) -> list[int]:
+        rows = self._selected()
+        if not rows:
+            self.status_var.set(
+                "Select one or more rows first - Ctrl+A or 'Select all' "
+                "selects the whole list.")
+        return rows
 
     # --------------------------------------------------------------- actions
     def _add(self) -> None:
@@ -335,20 +366,44 @@ class App(tk.Tk):
         self._refresh()
 
     def _bump(self, delta: int) -> None:
-        index = self._selected()
-        if index is None:
+        rows = self._need_selection()
+        if not rows:
             return
-        item = self.queue[index]
-        item.qty = max(1, item.qty + delta)
-        self._refresh()
-        self.tree.selection_set(str(index))
+        for index in rows:
+            item = self.queue[index]
+            item.qty = max(1, item.qty + delta)
+        self._refresh(keep=rows)
+        self.status_var.set(f"{'Added 1 to' if delta > 0 else 'Removed 1 from'} "
+                            f"{len(rows)} row(s).")
+
+    def _set_count(self) -> None:
+        """Give every selected patient the same number of stickers - the usual
+        thing after pasting a list."""
+        rows = self._need_selection()
+        if not rows:
+            return
+        current = self.queue[rows[0]].qty
+        value = simpledialog.askinteger(
+            "Stickers", f"Stickers for each of the {len(rows)} selected "
+                        f"patient(s):",
+            parent=self, minvalue=1, maxvalue=99, initialvalue=current)
+        if value is None:
+            return
+        for index in rows:
+            self.queue[index].qty = value
+        self._refresh(keep=rows)
+        self.status_var.set(f"Set {len(rows)} row(s) to {value} sticker(s) each.")
 
     def _remove(self) -> None:
-        index = self._selected()
-        if index is None:
+        rows = self._need_selection()
+        if not rows:
             return
-        self.queue.pop(index)
-        self._refresh()
+        for index in reversed(rows):      # reversed, so earlier ones keep their index
+            self.queue.pop(index)
+        # Clear the selection rather than let it land on whatever shuffled into
+        # those positions - otherwise the next +1 hits a row nobody chose.
+        self._refresh(keep=[])
+        self.status_var.set(f"Removed {len(rows)} row(s).")
 
     def _clear(self) -> None:
         self.queue.clear()
